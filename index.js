@@ -116,7 +116,7 @@ app.delete('/api/profiles/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
   }
-});
+})
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server live on port ${PORT}`));

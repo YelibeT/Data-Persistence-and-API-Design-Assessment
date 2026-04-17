@@ -1,0 +1,15 @@
+# Secrets (CRITICAL)
+.env
+
+# Dependencies (Large folders)
+node_modules/
+dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+.DS_Store
+thumbs.db
