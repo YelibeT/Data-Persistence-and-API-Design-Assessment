@@ -1,9 +1,12 @@
-require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
-const cors = require("cors");
-const { Pool } = require("pg");
-const { uuidv7 } = require("uuidv7");
+import "dotenv/config";
+import express from "express";
+import axios from "axios";
+import cors from "cors";
+import pkg from "pg";
+import { uuidv7 } from "uuidv7";
+
+const { Pool } = pkg;
+
 
 const app = express();
 
@@ -275,6 +278,6 @@ app.delete("/api/profiles/:id", async (req, res) => {
 // ===================== START SERVER =====================
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`Server live on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT}`);
 });
