@@ -228,31 +228,111 @@ app.get("/api/profiles", async (req, res) => {
   }
 });
 
-app.get("/api/profiles/:id", async (req, res) => {
+app.get("/api/profiles", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT * FROM profiles WHERE id = $1",
-      [req.params.id]
-    );
+    let {
+      gender,
+      country_id,
+      age_group,
+      min_age,
+      max_age,
+      sort_by = "created_at",
+      order = "asc",
+      page = 1,
+      limit = 10,
+    } = req.query;
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({
+    page = Number(page);
+    limit = Math.min(Number(limit) || 10, 50);
+
+    let sql = "SELECT * FROM profiles WHERE 1=1";
+    let params = [];
+
+    function add(condition, value) {
+      params.push(value);
+      sql += ` AND ${condition.replace("?", `$${params.length}`)}`;
+    }
+
+    if (gender) add("gender = ?", gender);
+    if (country_id) add("country_id = ?", country_id);
+    if (age_group) add("age_group = ?", age_group);
+    if (min_age) add("age >= ?", min_age);
+    if (max_age) add("age <= ?", max_age);
+
+    // total count
+    const totalRes = await pool.query(sql, params);
+    const total = totalRes.rows.length;
+
+    // sorting
+    const validSort = ["age", "created_at", "gender_probability"];
+    if (!validSort.includes(sort_by)) {
+      return res.status(400).json({
         status: "error",
-        message: "Profile not found",
+        message: "Invalid query parameters",
       });
     }
 
+    const validOrder = ["asc", "desc"];
+    if (!validOrder.includes(order)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid query parameters",
+      });
+    }
+
+    if (min_age && isNaN(Number(min_age))) {
+      return res.status(422).json({
+        status: "error",
+        message: "Invalid query parameters"
+      });
+    }
+
+    if (max_age && isNaN(Number(max_age))) {
+      return res.status(422).json({
+        status: "error",
+        message: "Invalid query parameters"
+      });
+    }
+
+    if (page && isNaN(Number(page))) {
+      return res.status(422).json({
+        status: "error",
+        message: "Invalid query parameters"
+      });
+    }
+
+    if (limit && isNaN(Number(limit))) {
+      return res.status(422).json({
+        status: "error",
+        message: "Invalid query parameters"
+      });
+    }
+
+
+    sql += ` ORDER BY ${sort_by} ${order.toUpperCase()}`;
+
+    // pagination
+    const offset = (page - 1) * limit;
+    sql += ` LIMIT ${limit} OFFSET ${offset}`;
+
+    const result = await pool.query(sql, params);
+
     res.json({
       status: "success",
-      data: result.rows[0],
+      page,
+      limit,
+      total,
+      data: result.rows,
     });
+
   } catch (err) {
     res.status(500).json({
       status: "error",
-      message: err.message,
+      message: "Server failure",
     });
   }
 });
+
 
 app.delete("/api/profiles/:id", async (req, res) => {
   try {
