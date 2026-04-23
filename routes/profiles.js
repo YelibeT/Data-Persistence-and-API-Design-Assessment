@@ -13,11 +13,31 @@ router.get("/", async (req, res) => {
       max_age,
       min_gender_probability,
       min_country_probability,
-      sort_by = "created_at",
-      order = "desc",
+      sort_by,
+      order,
       page = 1,
       limit = 10,
     } = req.query;
+
+    const allowedSort = ["age", "created_at", "gender_probability"];
+    const allowedOrder = ["asc", "desc"];
+
+    if (sort_by && !allowedSort.includes(sort_by)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid query parameters",
+      });
+    }
+
+    if (order && !allowedOrder.includes(order)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid query parameters",
+      });
+    }
+
+    sort_by = sort_by || "created_at";
+    order = order || "desc";
 
     page = parseInt(page) || 1;
     limit = Math.min(parseInt(limit) || 10, 50);
@@ -46,25 +66,23 @@ router.get("/", async (req, res) => {
     if (min_country_probability)
       add("country_probability >= ?", Number(min_country_probability));
 
-    // COUNT QUERY (FIXED)
     const countResult = await pool.query(
       "SELECT COUNT(*) " + baseQuery,
       values
     );
+
     const total = parseInt(countResult.rows[0].count);
 
-    // SORTING (STRICT MAPPING FOR GRADER)
     const sortMap = {
       age: "age",
       created_at: "created_at",
       gender_probability: "gender_probability",
     };
 
-    const column = sortMap[sort_by] || "created_at";
+    const column = sortMap[sort_by];
     const direction = order === "asc" ? "ASC" : "DESC";
 
     let finalQuery = "SELECT * " + baseQuery;
-
     finalQuery += ` ORDER BY ${column} ${direction}`;
     finalQuery += ` LIMIT $${i} OFFSET $${i + 1}`;
 
@@ -80,7 +98,6 @@ router.get("/", async (req, res) => {
       data: result.rows,
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({
       status: "error",
       message: "Server failure",
