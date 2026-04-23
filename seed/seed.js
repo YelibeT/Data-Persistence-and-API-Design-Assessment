@@ -10,10 +10,16 @@ async function seed() {
       INSERT INTO profiles (
         name, gender, gender_probability,
         age, age_group,
-        country_id, country_name, country_probability
+        country_id, country_probability
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      ON CONFLICT (name) DO NOTHING
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT (name) DO UPDATE SET
+        gender = EXCLUDED.gender,
+        gender_probability = EXCLUDED.gender_probability,
+        age = EXCLUDED.age,
+        age_group = EXCLUDED.age_group,
+        country_id = EXCLUDED.country_id,
+        country_probability = EXCLUDED.country_probability
       `,
       [
         p.name,
@@ -22,7 +28,6 @@ async function seed() {
         p.age,
         p.age_group,
         p.country_id,
-        p.country_name,
         p.country_probability,
       ]
     );

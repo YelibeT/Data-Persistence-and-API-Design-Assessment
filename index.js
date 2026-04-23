@@ -20,14 +20,17 @@ function parseQuery(q) {
   const filters = {};
   const query = q.toLowerCase();
 
-  const hasMale = query.includes("male");
-  const hasFemale = query.includes("female");
-  if (hasMale && !hasFemale) filters.gender = "male";
-  if (hasFemale && !hasMale) filters.gender = "female";
-  if (hasMale && hasFemale) delete filters.gender;
+  const hasMale = /\bmales?\b/.test(query);
+  const hasFemale = /\bfemales?\b/.test(query);
+
+  if (hasMale && !hasFemale) {
+    filters.gender = "male";
+  } else if (hasFemale && !hasMale) {
+    filters.gender = "female";
+  }
 
   if (query.includes("child")) filters.age_group = "child";
-  if (query.includes("teenager")) filters.age_group = "teenager";
+  if (/\bteenagers?\b/.test(query)) filters.age_group = "teenager";
   if (query.includes("adult")) filters.age_group = "adult";
   if (query.includes("senior")) filters.age_group = "senior";
 
@@ -37,10 +40,16 @@ function parseQuery(q) {
   }
 
   const above = query.match(/above\s+(\d+)/);
-  if (above) filters.min_age = Number(above[1]) + 1;
+  if (above) {
+    const min = Number(above[1]) + 1;
+    filters.min_age = filters.min_age ? Math.max(filters.min_age, min) : min;
+  }
 
   const below = query.match(/below\s+(\d+)/);
-  if (below) filters.max_age = Number(below[1]) - 1;
+  if (below) {
+    const max = Number(below[1]) - 1;
+    filters.max_age = filters.max_age ? Math.min(filters.max_age, max) : max;
+  }
 
   const countryMap = { 
     nigeria: "NG", 
@@ -136,9 +145,6 @@ app.get("/api/profiles/search", async (req, res) => {
     }
 
     const result = await pool.query(sql, params);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ status: "error", message: "No matching profiles found" });
-    }
 
     res.json({ status: "success", data: result.rows });
   } catch (err) {

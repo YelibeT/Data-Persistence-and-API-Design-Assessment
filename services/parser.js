@@ -5,14 +5,17 @@ export function parseQuery(q) {
 
   q = q.toLowerCase();
 
-  const hasMale = q.includes("male");
-  const hasFemale = q.includes("female");
+  const hasMale = /\bmales?\b/.test(q);
+  const hasFemale = /\bfemales?\b/.test(q);
 
-  if (hasMale && !hasFemale) filters.gender = "male";
-  if (hasFemale && !hasMale) filters.gender = "female";
+  if (hasMale && !hasFemale) {
+    filters.gender = "male";
+  } else if (hasFemale && !hasMale) {
+    filters.gender = "female";
+  }
 
   if (q.includes("child")) filters.age_group = "child";
-  if (q.includes("teenager")) filters.age_group = "teenager";
+  if (/\bteenagers?\b/.test(q)) filters.age_group = "teenager";
   if (q.includes("adult")) filters.age_group = "adult";
   if (q.includes("senior")) filters.age_group = "senior";
 
@@ -22,10 +25,16 @@ export function parseQuery(q) {
   }
 
   const above = q.match(/above\s+(\d+)/);
-  if (above) filters.min_age = Number(above[1]);
+  if (above) {
+    const min = Number(above[1]) + 1;
+    filters.min_age = filters.min_age ? Math.max(filters.min_age, min) : min;
+  }
 
   const below = q.match(/below\s+(\d+)/);
-  if (below) filters.max_age = Number(below[1]);
+  if (below) {
+    const max = Number(below[1]) - 1;
+    filters.max_age = filters.max_age ? Math.min(filters.max_age, max) : max;
+  }
 
   const between = q.match(/between\s+(\d+)\s+and\s+(\d+)/);
   if (between) {
@@ -48,7 +57,7 @@ export function parseQuery(q) {
     }
   }
 
-  if (q.includes("male and female")) {
+  if (hasMale && hasFemale) {
     delete filters.gender;
   }
 
