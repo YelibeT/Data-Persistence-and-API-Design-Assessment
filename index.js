@@ -2,68 +2,13 @@ import "dotenv/config";
 import express from "express";
 import axios from "axios";
 import cors from "cors";
-import pkg from "pg";
 import { uuidv7 } from "uuidv7";
+import { pool } from "./db/pool.js";
+import { parseQuery } from "./services/parser.js";
 
-const { Pool } = pkg;
 const app = express();
-
 app.use(cors());
 app.use(express.json());
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
-
-function parseQuery(q) {
-  const filters = {};
-  const query = q.toLowerCase();
-
-  const hasMale = /\bmales?\b/.test(query);
-  const hasFemale = /\bfemales?\b/.test(query);
-
-  if (hasMale && !hasFemale) {
-    filters.gender = "male";
-  } else if (hasFemale && !hasMale) {
-    filters.gender = "female";
-  }
-
-  if (query.includes("child")) filters.age_group = "child";
-  if (/\bteenagers?\b/.test(query)) filters.age_group = "teenager";
-  if (query.includes("adult")) filters.age_group = "adult";
-  if (query.includes("senior")) filters.age_group = "senior";
-
-  if (query.includes("young")) {
-    filters.min_age = 16;
-    filters.max_age = 24;
-  }
-
-  const above = query.match(/above\s+(\d+)/);
-  if (above) {
-    const min = Number(above[1]) + 1;
-    filters.min_age = filters.min_age ? Math.max(filters.min_age, min) : min;
-  }
-
-  const below = query.match(/below\s+(\d+)/);
-  if (below) {
-    const max = Number(below[1]) - 1;
-    filters.max_age = filters.max_age ? Math.min(filters.max_age, max) : max;
-  }
-
-  const countryMap = { 
-    nigeria: "NG", 
-    kenya: "KE", 
-    ethiopia: "ET", 
-    ghana: "GH", 
-    uganda: "UG" 
-  };
-  for (const [name, id] of Object.entries(countryMap)) {
-    if (query.includes(name)) filters.country_id = id;
-  }
-
-  return filters;
-}
 
 const getAgeGroup = (age) => {
   if (age <= 12) return "child";
@@ -72,41 +17,7 @@ const getAgeGroup = (age) => {
   return "senior";
 };
 
-app.post("/api/profiles", async (req, res) => {
-  const { name } = req.body;
-  if (!name || typeof name !== "string" || name.trim() === "") {
-    return res.status(400).json({ status: "error", message: "Missing or empty name" });
-  }
-
-  try {
-    const existing = await pool.query("SELECT * FROM profiles WHERE LOWER(name) = LOWER($1)", [name]);
-    if (existing.rows.length > 0) {
-      return res.json({ status: "success", message: "Profile already exists", data: existing.rows[0] });
-    }
-
-    const [gRes, aRes, nRes] = await Promise.all([
-      axios.get(`https://api.genderize.io?name=${name}`),
-      axios.get(`https://api.agify.io?name=${name}`),
-      axios.get(`https://api.nationalize.io?name=${name}`),
-    ]);
-
-    if (!gRes.data.gender || aRes.data.age === null || !nRes.data.country?.length) {
-      return res.status(502).json({ status: "error", message: "External API failure" });
-    }
-
-    const topCountry = nRes.data.country.sort((a, b) => b.probability - a.probability)[0];
-    const result = await pool.query(
-      `INSERT INTO profiles (id, name, gender, gender_probability, age, age_group, country_id, country_probability)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [uuidv7(), name.toLowerCase(), gRes.data.gender, gRes.data.probability, aRes.data.age, getAgeGroup(aRes.data.age), topCountry.country_id, topCountry.probability]
-    );
-
-    res.status(201).json({ status: "success", data: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
-  }
-});
-
+// 1. SEARCH ROUTE (Must be above /:id)
 app.get("/api/profiles/search", async (req, res) => {
   try {
     const q = req.query.q;
@@ -145,13 +56,13 @@ app.get("/api/profiles/search", async (req, res) => {
     }
 
     const result = await pool.query(sql, params);
-
     res.json({ status: "success", data: result.rows });
   } catch (err) {
     res.status(500).json({ status: "error", message: "Server failure" });
   }
 });
 
+// 2. GENERAL LIST ROUTE
 app.get("/api/profiles", async (req, res) => {
   try {
     let { gender, country_id, age_group, min_age, max_age, sort_by = "created_at", order = "desc", page = 1, limit = 10 } = req.query;
@@ -197,6 +108,43 @@ app.get("/api/profiles", async (req, res) => {
   }
 });
 
+// 3. POST ROUTE
+app.post("/api/profiles", async (req, res) => {
+  const { name } = req.body;
+  if (!name || typeof name !== "string" || name.trim() === "") {
+    return res.status(400).json({ status: "error", message: "Missing or empty name" });
+  }
+
+  try {
+    const existing = await pool.query("SELECT * FROM profiles WHERE LOWER(name) = LOWER($1)", [name]);
+    if (existing.rows.length > 0) {
+      return res.json({ status: "success", message: "Profile already exists", data: existing.rows[0] });
+    }
+
+    const [gRes, aRes, nRes] = await Promise.all([
+      axios.get(`https://api.genderize.io?name=${name}`),
+      axios.get(`https://api.agify.io?name=${name}`),
+      axios.get(`https://api.nationalize.io?name=${name}`),
+    ]);
+
+    if (!gRes.data.gender || aRes.data.age === null || !nRes.data.country?.length) {
+      return res.status(502).json({ status: "error", message: "External API failure" });
+    }
+
+    const topCountry = nRes.data.country.sort((a, b) => b.probability - a.probability)[0];
+    const result = await pool.query(
+      `INSERT INTO profiles (id, name, gender, gender_probability, age, age_group, country_id, country_probability)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [uuidv7(), name.toLowerCase(), gRes.data.gender, gRes.data.probability, aRes.data.age, getAgeGroup(aRes.data.age), topCountry.country_id, topCountry.probability]
+    );
+
+    res.status(201).json({ status: "success", data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// 4. DELETE ROUTE
 app.delete("/api/profiles/:id", async (req, res) => {
   try {
     await pool.query("DELETE FROM profiles WHERE id = $1", [req.params.id]);

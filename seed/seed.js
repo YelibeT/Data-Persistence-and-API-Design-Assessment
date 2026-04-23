@@ -22,7 +22,7 @@ async function seed() {
         country_probability = EXCLUDED.country_probability
       `,
       [
-        p.name,
+        p.name.toLowerCase(),
         p.gender,
         p.gender_probability,
         p.age,

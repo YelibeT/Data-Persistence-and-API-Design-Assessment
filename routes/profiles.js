@@ -1,57 +1,8 @@
 import express from "express";
 import { pool } from "../db/pool.js";
+import { parseQuery } from "../services/parser.js";
 
 const router = express.Router();
-
-function parseQuery(q) {
-  const filters = {};
-  const query = q.toLowerCase();
-
-  const hasMale = /\bmales?\b/.test(query);
-  const hasFemale = /\bfemales?\b/.test(query);
-
-  if (hasMale && !hasFemale) {
-    filters.gender = "male";
-  } else if (hasFemale && !hasMale) {
-    filters.gender = "female";
-  }
-
-  if (query.includes("child")) filters.age_group = "child";
-  if (/\bteenagers?\b/.test(query)) filters.age_group = "teenager";
-  if (query.includes("adult")) filters.age_group = "adult";
-  if (query.includes("senior")) filters.age_group = "senior";
-
-  if (query.includes("young")) {
-    filters.min_age = 16;
-    filters.max_age = 24;
-  }
-
-  const aboveMatch = query.match(/above\s+(\d+)/);
-  if (aboveMatch) {
-    const min = Number(aboveMatch[1]) + 1;
-    filters.min_age = filters.min_age ? Math.max(filters.min_age, min) : min;
-  }
-
-  const belowMatch = query.match(/below\s+(\d+)/);
-  if (belowMatch) {
-    const max = Number(belowMatch[1]) - 1;
-    filters.max_age = filters.max_age ? Math.min(filters.max_age, max) : max;
-  }
-
-  const countryMap = {
-    nigeria: "NG",
-    kenya: "KE",
-    ethiopia: "ET",
-    ghana: "GH",
-    uganda: "UG"
-  };
-
-  for (const [name, id] of Object.entries(countryMap)) {
-    if (query.includes(name)) filters.country_id = id;
-  }
-
-  return filters;
-}
 
 async function getProfilesInternal(filters, pagination) {
   let { gender, age_group, country_id, min_age, max_age, sort_by = "created_at", order = "desc" } = filters;
@@ -95,6 +46,25 @@ async function getProfilesInternal(filters, pagination) {
   };
 }
 
+router.get("/search", async (req, res) => {
+  try {
+    const q = req.query.q;
+    if (!q || q.trim() === "") {
+      return res.status(400).json({ status: "error", message: "Missing query" });
+    }
+
+    /*const filters = parseQuery(q);
+    if (Object.keys(filters).length === 0) {
+      return res.status(422).json({ status: "error", message: "Unable to interpret query" });
+    }*/
+
+    const result = await getProfilesInternal(filters, req.query);
+    res.json({ status: "success", data: result.data });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: "Server failure" });
+  }
+});
+
 router.get("/", async (req, res) => {
   try {
     const { sort_by, order } = req.query;
@@ -110,26 +80,6 @@ router.get("/", async (req, res) => {
 
     const result = await getProfilesInternal(req.query, req.query);
     res.json({ status: "success", ...result });
-  } catch (err) {
-    res.status(500).json({ status: "error", message: "Server failure" });
-  }
-});
-
-router.get("/search", async (req, res) => {
-  try {
-    const q = req.query.q;
-    if (!q || q.trim() === "") {
-      return res.status(400).json({ status: "error", message: "Missing query" });
-    }
-
-    const filters = parseQuery(q);
-    if (Object.keys(filters).length === 0) {
-      return res.status(422).json({ status: "error", message: "Unable to interpret query" });
-    }
-
-    const result = await getProfilesInternal(filters, req.query);
-
-    res.json({ status: "success", data: result.data });
   } catch (err) {
     res.status(500).json({ status: "error", message: "Server failure" });
   }
