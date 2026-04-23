@@ -242,80 +242,68 @@ app.get("/api/profiles", async (req, res) => {
       limit = 10,
     } = req.query;
 
-    page = Number(page);
-    limit = Math.min(Number(limit) || 10, 50);
+    const validSort = ["age", "created_at", "gender_probability"];
+    const validOrder = ["asc", "desc"];
 
-    let sql = "SELECT * FROM profiles WHERE 1=1";
+    if (sort_by && !validSort.includes(sort_by)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid query parameters",
+      });
+    }
+
+    if (order && !validOrder.includes(order)) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid query parameters",
+      });
+    }
+
+    if (
+      (min_age && isNaN(min_age)) ||
+      (max_age && isNaN(max_age)) ||
+      (page && isNaN(page)) ||
+      (limit && isNaN(limit))
+    ) {
+      return res.status(422).json({
+        status: "error",
+        message: "Invalid query parameters",
+      });
+    }
+
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 10;
+
+    if (page < 1) page = 1;
+    if (limit > 50) limit = 50;
+
+    let baseSql = "FROM profiles WHERE 1=1";
     let params = [];
 
     function add(condition, value) {
       params.push(value);
-      sql += ` AND ${condition.replace("?", `$${params.length}`)}`;
+      baseSql += ` AND ${condition.replace("?", `$${params.length}`)}`;
     }
 
     if (gender) add("gender = ?", gender);
     if (country_id) add("country_id = ?", country_id);
     if (age_group) add("age_group = ?", age_group);
-    if (min_age) add("age >= ?", min_age);
-    if (max_age) add("age <= ?", max_age);
+    if (min_age) add("age >= ?", Number(min_age));
+    if (max_age) add("age <= ?", Number(max_age));
 
-    // total count
-    const totalRes = await pool.query(sql, params);
-    const total = totalRes.rows.length;
+    const totalRes = await pool.query(
+      "SELECT COUNT(*) " + baseSql,
+      params
+    );
+    const total = parseInt(totalRes.rows[0].count);
 
-    // sorting
-    const validSort = ["age", "created_at", "gender_probability"];
-    if (!validSort.includes(sort_by)) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid query parameters",
-      });
-    }
+    let finalQuery = "SELECT * " + baseSql;
+    finalQuery += ` ORDER BY ${sort_by} ${order.toUpperCase()}`;
 
-    const validOrder = ["asc", "desc"];
-    if (!validOrder.includes(order)) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid query parameters",
-      });
-    }
-
-    if (min_age && isNaN(Number(min_age))) {
-      return res.status(422).json({
-        status: "error",
-        message: "Invalid query parameters"
-      });
-    }
-
-    if (max_age && isNaN(Number(max_age))) {
-      return res.status(422).json({
-        status: "error",
-        message: "Invalid query parameters"
-      });
-    }
-
-    if (page && isNaN(Number(page))) {
-      return res.status(422).json({
-        status: "error",
-        message: "Invalid query parameters"
-      });
-    }
-
-    if (limit && isNaN(Number(limit))) {
-      return res.status(422).json({
-        status: "error",
-        message: "Invalid query parameters"
-      });
-    }
-
-
-    sql += ` ORDER BY ${sort_by} ${order.toUpperCase()}`;
-
-    // pagination
     const offset = (page - 1) * limit;
-    sql += ` LIMIT ${limit} OFFSET ${offset}`;
+    finalQuery += ` LIMIT ${limit} OFFSET ${offset}`;
 
-    const result = await pool.query(sql, params);
+    const result = await pool.query(finalQuery, params);
 
     res.json({
       status: "success",
@@ -326,12 +314,14 @@ app.get("/api/profiles", async (req, res) => {
     });
 
   } catch (err) {
+    console.error(err);
     res.status(500).json({
       status: "error",
       message: "Server failure",
     });
   }
 });
+
 
 
 app.delete("/api/profiles/:id", async (req, res) => {
