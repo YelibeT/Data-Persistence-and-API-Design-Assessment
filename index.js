@@ -13,7 +13,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===================== DB =====================
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -24,7 +24,6 @@ console.log(
   process.env.DATABASE_URL ? "Found" : "Not Found"
 );
 
-// ===================== HELPERS =====================
 const getAgeGroup = (age) => {
   if (age <= 12) return "child";
   if (age <= 19) return "teenager";
@@ -32,7 +31,6 @@ const getAgeGroup = (age) => {
   return "senior";
 };
 
-// ===================== POST PROFILE =====================
 app.post("/api/profiles", async (req, res) => {
   const { name } = req.body;
 
@@ -120,7 +118,6 @@ app.post("/api/profiles", async (req, res) => {
   }
 });
 
-// ===================== NATURAL LANGUAGE SEARCH (FIXED) =====================
 app.get("/api/profiles/search", async (req, res) => {
   try {
     const q = req.query.q?.toLowerCase();
@@ -194,7 +191,6 @@ app.get("/api/profiles/search", async (req, res) => {
   }
 });
 
-// ===================== GET ALL PROFILES =====================
 app.get("/api/profiles", async (req, res) => {
   try {
     const { gender, country_id, age_group } = req.query;
@@ -232,7 +228,6 @@ app.get("/api/profiles", async (req, res) => {
   }
 });
 
-// ===================== GET BY ID =====================
 app.get("/api/profiles/:id", async (req, res) => {
   try {
     const result = await pool.query(
@@ -259,7 +254,6 @@ app.get("/api/profiles/:id", async (req, res) => {
   }
 });
 
-// ===================== DELETE =====================
 app.delete("/api/profiles/:id", async (req, res) => {
   try {
     await pool.query("DELETE FROM profiles WHERE id = $1", [
@@ -275,7 +269,6 @@ app.delete("/api/profiles/:id", async (req, res) => {
   }
 });
 
-// ===================== START SERVER =====================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, '0.0.0.0', () => {
