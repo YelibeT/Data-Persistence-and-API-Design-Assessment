@@ -27,10 +27,16 @@ function parseQuery(q) {
   }
 
   const aboveMatch = query.match(/above\s+(\d+)/);
-  if (aboveMatch) filters.min_age = Number(aboveMatch[1]) + 1;
+  if (aboveMatch) {
+    const min = Number(aboveMatch[1]) + 1;
+    filters.min_age = filters.min_age ? Math.max(filters.min_age, min) : min;
+  }
 
   const belowMatch = query.match(/below\s+(\d+)/);
-  if (belowMatch) filters.max_age = Number(belowMatch[1]) - 1;
+  if (belowMatch) {
+    const max = Number(belowMatch[1]) - 1;
+    filters.max_age = filters.max_age ? Math.min(filters.max_age, max) : max;
+  }
 
   const countryMap = {
     nigeria: "NG",
@@ -122,9 +128,6 @@ router.get("/search", async (req, res) => {
     }
 
     const result = await getProfilesInternal(filters, req.query);
-    if (result.data.length === 0) {
-      return res.status(404).json({ status: "error", message: "No matching profiles found" });
-    }
 
     res.json({ status: "success", data: result.data });
   } catch (err) {
