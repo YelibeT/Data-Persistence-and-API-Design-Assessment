@@ -6,23 +6,15 @@ import pkg from "pg";
 import { uuidv7 } from "uuidv7";
 
 const { Pool } = pkg;
-
-
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
-
-console.log(
-  "DB URL Check:",
-  process.env.DATABASE_URL ? "Found" : "Not Found"
-);
 
 const getAgeGroup = (age) => {
   if (age <= 12) return "child";
@@ -33,25 +25,14 @@ const getAgeGroup = (age) => {
 
 app.post("/api/profiles", async (req, res) => {
   const { name } = req.body;
-
   if (!name || typeof name !== "string" || name.trim() === "") {
-    return res
-      .status(400)
-      .json({ status: "error", message: "Missing or empty name" });
+    return res.status(400).json({ status: "error", message: "Missing or empty name" });
   }
 
   try {
-    const existing = await pool.query(
-      "SELECT * FROM profiles WHERE LOWER(name) = LOWER($1)",
-      [name]
-    );
-
+    const existing = await pool.query("SELECT * FROM profiles WHERE LOWER(name) = LOWER($1)", [name]);
     if (existing.rows.length > 0) {
-      return res.json({
-        status: "success",
-        message: "Profile already exists",
-        data: existing.rows[0],
-      });
+      return res.json({ status: "success", message: "Profile already exists", data: existing.rows[0] });
     }
 
     const [gRes, aRes, nRes] = await Promise.all([
@@ -60,287 +41,128 @@ app.post("/api/profiles", async (req, res) => {
       axios.get(`https://api.nationalize.io?name=${name}`),
     ]);
 
-    if (!gRes.data.gender || gRes.data.count === 0)
-      return res.status(502).json({
-        status: "error",
-        message: "Genderize returned invalid response",
-      });
+    if (!gRes.data.gender || aRes.data.age === null || !nRes.data.country?.length) {
+      return res.status(502).json({ status: "error", message: "External API failure" });
+    }
 
-    if (aRes.data.age === null)
-      return res.status(502).json({
-        status: "error",
-        message: "Agify returned invalid response",
-      });
-
-    if (!nRes.data.country || nRes.data.country.length === 0)
-      return res.status(502).json({
-        status: "error",
-        message: "Nationalize returned invalid response",
-      });
-
-    const topCountry = nRes.data.country.sort(
-      (a, b) => b.probability - a.probability
-    )[0];
-
-    const newId = uuidv7();
-    const ageGroup = getAgeGroup(aRes.data.age);
-
+    const topCountry = nRes.data.country.sort((a, b) => b.probability - a.probability)[0];
     const result = await pool.query(
-      `INSERT INTO profiles (
-        id, name, gender, gender_probability,
-        age, age_group,
-        country_id, country_probability
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      RETURNING *`,
-      [
-        newId,
-        name.toLowerCase(),
-        gRes.data.gender,
-        gRes.data.probability,
-        aRes.data.age,
-        ageGroup,
-        topCountry.country_id,
-        topCountry.probability,
-      ]
+      `INSERT INTO profiles (id, name, gender, gender_probability, age, age_group, country_id, country_probability)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [uuidv7(), name.toLowerCase(), gRes.data.gender, gRes.data.probability, aRes.data.age, getAgeGroup(aRes.data.age), topCountry.country_id, topCountry.probability]
     );
 
-    res.status(201).json({
-      status: "success",
-      data: result.rows[0],
-    });
+    res.status(201).json({ status: "success", data: result.rows[0] });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      status: "error",
-      message: err.message,
-    });
+    res.status(500).json({ status: "error", message: err.message });
   }
 });
 
 app.get("/api/profiles/search", async (req, res) => {
   try {
     const q = req.query.q?.toLowerCase();
-
-    if (!q) {
-      return res.status(400).json({
-        status: "error",
-        message: "Missing query",
-      });
+    if (!q || q.trim() === "") {
+      return res.status(400).json({ status: "error", message: "Missing query" });
     }
 
     let sql = "SELECT * FROM profiles WHERE 1=1";
     let params = [];
 
-    // gender
-    if (q.includes("male")) {
-      params.push("male");
-      sql += ` AND gender ILIKE $${params.length}`;
-    }
-
+    // Improved NLP Logic
     if (q.includes("female")) {
       params.push("female");
-      sql += ` AND gender ILIKE $${params.length}`;
+      sql += ` AND gender = $${params.length}`;
+    } else if (q.includes("male")) {
+      params.push("male");
+      sql += ` AND gender = $${params.length}`;
     }
 
-    // country mapping
-    const countryMap = {
-      ethiopia: "ET",
-      nigeria: "NG",
-      kenya: "KE",
-    };
-
-    for (const key in countryMap) {
-      if (q.includes(key)) {
-        params.push(countryMap[key]);
-        sql += ` AND country_id ILIKE $${params.length}`;
+    const countryMap = { nigeria: "NG", kenya: "KE", ethiopia: "ET", ghana: "GH" };
+    for (const [name, id] of Object.entries(countryMap)) {
+      if (q.includes(name)) {
+        params.push(id);
+        sql += ` AND country_id = $${params.length}`;
       }
     }
 
-    // age rules
-    if (q.includes("young")) {
-      sql += " AND age BETWEEN 16 AND 24";
-    }
-
-    if (q.includes("adult")) {
-      sql += " AND age_group = 'adult'";
-    }
-
-    if (q.includes("teenager")) {
-      sql += " AND age_group = 'teenager'";
+    if (q.includes("young")) sql += " AND age BETWEEN 16 AND 24";
+    if (q.includes("adult")) sql += " AND age_group = 'adult'";
+    if (q.includes("teenager")) sql += " AND age_group = 'teenager'";
+    
+    const aboveMatch = q.match(/above\s+(\d+)/);
+    if (aboveMatch) {
+      params.push(parseInt(aboveMatch[1]));
+      sql += ` AND age > $${params.length}`;
     }
 
     const result = await pool.query(sql, params);
-
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        status: "error",
-        message: "No matching profiles found",
-      });
+      return res.status(404).json({ status: "error", message: "No matching profiles found" });
     }
 
-    res.json({
-      status: "success",
-      data: result.rows,
-    });
+    res.json({ status: "success", data: result.rows });
   } catch (err) {
-    res.status(500).json({
-      status: "error",
-      message: err.message,
-    });
+    res.status(500).json({ status: "error", message: err.message });
   }
 });
 
 app.get("/api/profiles", async (req, res) => {
   try {
-    const { gender, country_id, age_group } = req.query;
+    let { gender, country_id, age_group, min_age, max_age, sort_by = "created_at", order = "asc", page = 1, limit = 10 } = req.query;
 
-    let sql = "SELECT * FROM profiles WHERE 1=1";
-    let params = [];
-
-    if (gender) {
-      params.push(gender);
-      sql += ` AND gender ILIKE $${params.length}`;
-    }
-
-    if (country_id) {
-      params.push(country_id);
-      sql += ` AND country_id ILIKE $${params.length}`;
-    }
-
-    if (age_group) {
-      params.push(age_group);
-      sql += ` AND age_group ILIKE $${params.length}`;
-    }
-
-    const result = await pool.query(sql, params);
-
-    res.json({
-      status: "success",
-      count: result.rows.length,
-      data: result.rows,
-    });
-  } catch (err) {
-    res.status(500).json({
-      status: "error",
-      message: err.message,
-    });
-  }
-});
-
-app.get("/api/profiles", async (req, res) => {
-  try {
-    let {
-      gender,
-      country_id,
-      age_group,
-      min_age,
-      max_age,
-      sort_by = "created_at",
-      order = "asc",
-      page = 1,
-      limit = 10,
-    } = req.query;
-
-    const validSort = ["age", "created_at", "gender_probability"];
+    // Strict Query Validation
+    const validSort = ["age", "gender_probability", "created_at", "id"];
     const validOrder = ["asc", "desc"];
-
-    if (sort_by && !validSort.includes(sort_by)) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid query parameters",
-      });
+    if (!validSort.includes(sort_by) || !validOrder.includes(order.toLowerCase())) {
+      return res.status(400).json({ status: "error", message: "Invalid sort_by or order" });
     }
 
-    if (order && !validOrder.includes(order)) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid query parameters",
-      });
-    }
-
-    if (
-      (min_age && isNaN(min_age)) ||
-      (max_age && isNaN(max_age)) ||
-      (page && isNaN(page)) ||
-      (limit && isNaN(limit))
-    ) {
-      return res.status(422).json({
-        status: "error",
-        message: "Invalid query parameters",
-      });
-    }
-
-    page = parseInt(page) || 1;
-    limit = parseInt(limit) || 10;
-
-    if (page < 1) page = 1;
-    if (limit > 50) limit = 50;
+    page = parseInt(page);
+    limit = parseInt(limit);
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    if (limit > 50) limit = 50; // Max-cap behavior
 
     let baseSql = "FROM profiles WHERE 1=1";
     let params = [];
 
-    function add(condition, value) {
-      params.push(value);
-      baseSql += ` AND ${condition.replace("?", `$${params.length}`)}`;
-    }
+    if (gender) { params.push(gender); baseSql += ` AND gender = $${params.length}`; }
+    if (country_id) { params.push(country_id); baseSql += ` AND country_id = $${params.length}`; }
+    if (age_group) { params.push(age_group); baseSql += ` AND age_group = $${params.length}`; }
+    if (min_age) { params.push(Number(min_age)); baseSql += ` AND age >= $${params.length}`; }
+    if (max_age) { params.push(Number(max_age)); baseSql += ` AND age <= $${params.length}`; }
 
-    if (gender) add("gender = ?", gender);
-    if (country_id) add("country_id = ?", country_id);
-    if (age_group) add("age_group = ?", age_group);
-    if (min_age) add("age >= ?", Number(min_age));
-    if (max_age) add("age <= ?", Number(max_age));
-
-    const totalRes = await pool.query(
-      "SELECT COUNT(*) " + baseSql,
-      params
-    );
+    const totalRes = await pool.query("SELECT COUNT(*) " + baseSql, params);
     const total = parseInt(totalRes.rows[0].count);
-
-    let finalQuery = "SELECT * " + baseSql;
-    finalQuery += ` ORDER BY ${sort_by} ${order.toUpperCase()}`;
-
     const offset = (page - 1) * limit;
-    finalQuery += ` LIMIT ${limit} OFFSET ${offset}`;
 
+    const finalQuery = `SELECT * ${baseSql} ORDER BY ${sort_by} ${order.toUpperCase()} LIMIT ${limit} OFFSET ${offset}`;
     const result = await pool.query(finalQuery, params);
 
+    // Standard Pagination Envelope
     res.json({
       status: "success",
-      page,
-      limit,
-      total,
       data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      }
     });
-
   } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      status: "error",
-      message: "Server failure",
-    });
+    res.status(500).json({ status: "error", message: "Server failure" });
   }
 });
 
-
-
 app.delete("/api/profiles/:id", async (req, res) => {
   try {
-    await pool.query("DELETE FROM profiles WHERE id = $1", [
-      req.params.id,
-    ]);
-
+    await pool.query("DELETE FROM profiles WHERE id = $1", [req.params.id]);
     res.status(204).send();
   } catch (err) {
-    res.status(500).json({
-      status: "error",
-      message: err.message,
-    });
+    res.status(500).json({ status: "error", message: err.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, '::', () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, "::", () => console.log(`Server running on port ${PORT}`));
