@@ -117,7 +117,7 @@ router.get("/", async (req, res) => {
 
     res.json({
       status: "success",
-      total,
+      total: total,
       page: parsedPage,
       limit: parsedLimit,
       pages: Math.ceil(total / parsedLimit),
